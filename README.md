@@ -137,6 +137,11 @@ multi-timescale-successor-features-mujoco/
 │── logger.py                   # logger for the experiments
 │── replay_buffer.py            # replay buffer for the experiments
 │── utils.py                    # utility functions for the experiments
+│── full_train_multitimescale.py    # for training the agents undergoing periodic changes
+│── full_train_multitimescale_non_periodic.py    # for training the agents undergoing non-periodic changes
+│── full_train_multitimescale_ou_drift.py    # for training the agents undergoing OU drifts
+│── full_train_multitimescale_ppo.py    # for training ppo agents using parallel environments
+
 ```
 
 ## Acknowledgements
