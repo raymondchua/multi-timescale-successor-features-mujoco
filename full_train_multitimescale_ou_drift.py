@@ -1,0 +1,755 @@
+import warnings
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+import os
+
+# os.environ["MKL_SERVICE_FORCE_INTEL"] = "1"
+# os.environ['MUJOCO_GL'] = 'egl'
+
+from pathlib import Path
+
+import hydra
+import numpy as np
+import torch
+import wandb
+from dm_env import specs
+
+import dmc
+import utils
+import uuid
+from logger import Logger
+from replay_buffer import ReplayBufferStorage, make_replay_loader
+
+from video import TrainVideoRecorder, VideoRecorder
+from collections import OrderedDict
+
+from modulators import OUDrift
+
+torch.backends.cudnn.benchmark = True
+from absl import logging
+
+from dmc_benchmark import (
+    PRIMAL_TASKS,
+    PRIMAL_TASKS_WALK,
+    PRIMAL_TASKS_FAST_RUN,
+    PRIMAL_TASKS_RUN_BACKWARD,
+    CRL_TASKS_SAME_REWARD,
+    CRL_TASKS_DIFF_REWARD,
+    CRL_DIFF_DYNAMICS_DIFF_REWARD,
+    CRL_TASKS_DIFF_RUN_SPEED_REWARD,
+    CRL_DIFF_DOMAINS_SAME_REWARD,
+    CRL_WALKER_WALK_RUN_TASKS,
+    CRL_WALKER_STAND_RUN_TASKS,
+    CRL_RUN_JUMP_TASKS,
+    CRL_DIFF_DOMAINS_DIFF_REWARD,
+    CRL_DIFF_DOMAINS_DIFF_REWARD_CHEETAH_FISH,
+)
+
+num_actions = {
+    "cheetah": 6,
+    "walker": 6,
+    "quadruped": 12,
+    "cartpole": 1,
+    "humanoid": 21,
+    "fish": 5,
+    "dog": 38,
+    "finger": 2,
+}
+
+
+def make_agent(obs_type, obs_spec, action_spec, num_expl_steps, domain, cfg):
+    cfg.obs_type = obs_type
+    cfg.obs_shape = obs_spec.shape
+    cfg.action_shape = action_spec.shape
+    cfg.num_expl_steps = num_expl_steps
+    cfg.domain = domain
+    logging.info("agent config: %s", cfg)
+    return hydra.utils.instantiate(cfg)
+
+
+class Workspace:
+    def __init__(self, cfg):
+
+        if cfg.mila_env:
+            self.work_dir = Path(cfg.mila_work_dir)
+
+        else:
+            self.work_dir = Path(cfg.work_dir)
+
+        print(f"workspace: {self.work_dir}")
+
+        self.cfg = cfg
+        utils.set_seed_everywhere(cfg.seed)
+        self.device = torch.device(cfg.device)
+
+        self.logger = Logger(self.work_dir, use_tb=cfg.use_tb, use_wandb=cfg.use_wandb)
+
+        # create envs
+        if self.cfg.single_task_run:
+            logging.info("Single task run")
+            self.tasks = [PRIMAL_TASKS[self.cfg.domain]]
+            self.cfg.terminate_after_first_task = True
+
+        elif self.cfg.single_task_walk:
+            logging.info("Single task walk")
+            self.tasks = [PRIMAL_TASKS_WALK[self.cfg.domain]]
+            self.cfg.terminate_after_first_task = True
+
+        elif self.cfg.single_task_run_fast:
+            logging.info("Single task run fast")
+            self.tasks = [PRIMAL_TASKS_FAST_RUN[self.cfg.domain]]
+            self.cfg.terminate_after_first_task = True
+
+        elif self.cfg.single_task_run_backward:
+            logging.info("Single task run backward")
+            self.tasks = [PRIMAL_TASKS_RUN_BACKWARD[self.cfg.domain]]
+            self.cfg.terminate_after_first_task = True
+
+        # walk run tasks (only for walker domain)
+        elif self.cfg.walk_run_tasks:
+            assert self.cfg.domain == "walker", "Walk run tasks only for walker domain"
+            logging.info("Walk run tasks for walker")
+
+            self.tasks = CRL_WALKER_WALK_RUN_TASKS[self.cfg.domain]
+
+        # stand run tasks (only for walker domain)
+        elif self.cfg.stand_run_tasks:
+            assert self.cfg.domain == "walker", "Stand run tasks only for walker domain"
+            logging.info("Stand run tasks for walker")
+
+            self.tasks = CRL_WALKER_STAND_RUN_TASKS[self.cfg.domain]
+
+        # run jump tasks (only for quadruped domain)
+        elif self.cfg.run_jump_tasks:
+            assert (
+                self.cfg.domain == "quadruped"
+            ), "Run jump tasks only for quadruped domain"
+            logging.info("Run jump tasks for quadruped")
+
+            self.tasks = CRL_RUN_JUMP_TASKS[self.cfg.domain]
+
+        # different dynamics but same reward function for all tasks
+        elif (
+            self.cfg.diff_dynamics_for_all_tasks and self.cfg.same_reward_for_all_tasks
+        ):
+            logging.info("Different dynamics but same reward function for all tasks")
+            self.tasks = CRL_TASKS_SAME_REWARD[self.cfg.domain]
+
+        # different dynamics and different reward function for all tasks
+        elif (
+            self.cfg.diff_dynamics_for_all_tasks
+            and not self.cfg.same_reward_for_all_tasks
+        ):
+            logging.info(
+                "Different dynamics and different reward function for all tasks"
+            )
+            self.tasks = CRL_DIFF_DYNAMICS_DIFF_REWARD[self.cfg.domain]
+
+        # different run speed but same reward function for all tasks
+        elif self.cfg.diff_run_speed_for_all_tasks:
+            logging.info("Different run speed but same reward function for all tasks")
+            self.tasks = CRL_TASKS_DIFF_RUN_SPEED_REWARD[self.cfg.domain]
+
+        # different domains (eg. cheetah-run and walker-run) with same reward function for all tasks
+        elif self.cfg.diff_domains_same_reward:
+            logging.info("Different domains with same reward function for all tasks")
+            self.tasks = CRL_DIFF_DOMAINS_SAME_REWARD
+
+        # different domains and different reward function (eg. cheetah-run and quadruped-jump)
+        elif self.cfg.diff_domains_diff_reward:
+            logging.info(
+                "Different domains with different reward function for all tasks"
+            )
+            self.tasks = CRL_DIFF_DOMAINS_DIFF_REWARD
+
+        elif self.cfg.diff_domains_diff_reward_cheetah_fish:
+            logging.info("Different domains with different task for cheetah and fish")
+            self.tasks = CRL_DIFF_DOMAINS_DIFF_REWARD_CHEETAH_FISH
+
+        # same dynamics but different reward function for all tasks (eg. run forward and backward)
+        else:
+            assert (
+                not self.cfg.diff_dynamics_for_all_tasks
+                and not self.cfg.same_reward_for_all_tasks
+            ), "Invalid tasks configuration"
+            logging.info("Same dynamics but different reward function for all tasks")
+            self.tasks = CRL_TASKS_DIFF_REWARD[self.cfg.domain]
+
+        self.num_tasks = len(self.tasks)
+        self._current_task_id = 0  # task id always starts from 0
+
+        # create video recorders
+        # self.eval_video_recorder = VideoRecorder(
+        #     self.work_dir if cfg.save_eval_video else None,
+        #     camera_id=0 if "quadruped" not in self.cfg.domain else 2,
+        #     use_wandb=self.cfg.use_wandb,
+        # )
+
+        # self.train_video_recorder = TrainVideoRecorder(
+        #     self.work_dir if cfg.save_train_video else None,
+        #     camera_id=0 if "quadruped" not in self.cfg.domain else 2,
+        #     use_wandb=self.cfg.use_wandb,
+        # )
+
+        self.timer = utils.Timer()
+        self._global_step = 0
+        self._global_episode = 0
+        self._exposure_id = 0
+
+        self.train_envs = []
+        self.eval_envs = []
+        self.obs_specs = []
+        self.num_actions = []
+
+        name = self.tasks[0]
+        domain, task = name.split("_", 1)
+        self.valid_actions = num_actions[domain]
+
+        self.env_rng = np.random.default_rng(seed=self.cfg.env_seed)
+        mass_scale = self.env_rng.uniform(0.95, 1.05)
+        friction_scale = self.env_rng.uniform(0.9, 1.1)
+
+        # create new training and eval environment
+        train_env = dmc.make(
+            name,
+            self.cfg.obs_type,
+            self.cfg.frame_stack,
+            self.cfg.action_repeat,
+            self.cfg.seed,
+            num_actions=self.valid_actions,
+            num_valid_actions=self.valid_actions,
+            normalize_observation=self.cfg.normalize_observation,
+            device=self.cfg.device,
+            mass_scale=mass_scale,
+            friction_scale=friction_scale,
+        )
+
+        logging.info("task: %s", self.tasks[0])
+
+        # get the max shape of obs_spec and action_spec
+        obs_spec = specs.Array(
+            shape=train_env.observation_spec().shape,
+            dtype=np.float32,
+            name="observation",
+        )
+
+        action_spec = specs.Array(
+            shape=np.array([self.valid_actions]),
+            dtype=np.float32,
+            name="action",
+        )
+
+        # create agent
+        self.agent = make_agent(
+            cfg.obs_type,
+            obs_spec,
+            action_spec,
+            cfg.num_seed_frames // cfg.action_repeat,
+            cfg.domain,
+            cfg.agent,
+        )
+
+        logging.info("num of parameters: %s", self.agent.num_params())
+
+        logging.info("agent: %s", self.agent.__class__.__name__)
+
+        # get meta specs
+        meta_specs = self.agent.get_meta_specs()
+        # create replay buffer
+        data_specs = (
+            obs_spec,
+            action_spec,
+            specs.Array((1,), np.float32, "reward"),
+            specs.Array((1,), np.float32, "discount"),
+        )
+
+        total_num_updates = (
+            self.cfg.num_train_frames * self.num_tasks * self.cfg.num_exposures
+        ) // self.cfg.agent.update_every_steps
+        num_updates_per_task = (
+            self.cfg.num_train_frames // self.cfg.agent.update_every_steps
+        )
+        logging.info("total_num_updates: %s", total_num_updates)
+        logging.info("num_updates_per_task: %s", num_updates_per_task)
+        # if self.cfg.agent.consolidation:
+        #     self.agent.update_storage_timescale_check(total_num_updates)
+        #     self.agent.first_task_update_storage_timescale_check(num_updates_per_task)
+
+        self.plasticity_injection_step = int(
+            self.cfg.num_train_frames * self.cfg.plasticity_injection
+        )
+
+        # generate a uuid for the replay directory
+        self.uuid = uuid.uuid4().hex
+
+        # add only uuid to replay directory
+        replay_dir = self.work_dir / "buffer" / self.uuid
+
+        # log the replay directory
+        logging.info("replay_dir: %s", replay_dir)
+
+        # create data storage
+        self.replay_storage = ReplayBufferStorage(
+            data_specs, meta_specs, replay_dir, self.cfg.env_type
+        )
+
+        # create replay buffer
+        self.replay_loader = make_replay_loader(
+            self.replay_storage,
+            cfg.replay_buffer_size,
+            cfg.batch_size,
+            cfg.replay_buffer_num_workers,
+            False,
+            cfg.nstep,
+            cfg.discount,
+        )
+
+        self._replay_iter = None
+
+        # flatten the cfg file
+        self._cfg_flatten = utils.dictionary_flatten(self.cfg)
+
+        logging.info("{}\n".format(self._cfg_flatten))
+
+        # create logger
+        if cfg.use_wandb:
+            exp_name = "_".join(
+                [
+                    cfg.experiment,
+                    cfg.agent.name,
+                    cfg.domain,
+                    cfg.obs_type,
+                    str(cfg.seed),
+                ]
+            )
+
+            # get current working directory and add wandb_dir
+            wandb_dir_absolute = Path.cwd()
+
+            # convert wandb_dir_absolute to string
+            wandb_dir_str = wandb_dir_absolute.as_posix()
+
+            # log wandb_dir_str
+            logging.info("wandb_dir_str: %s", wandb_dir_str)
+
+            project_name = "continual_rl" + self.cfg.domain + "_" + self.cfg.mode
+            wandb.init(
+                project=project_name,
+                group=cfg.agent.name,
+                name=exp_name,
+                config=self._cfg_flatten,
+                dir=wandb_dir_str,
+                mode=self.cfg.wandb_mode,
+                settings=wandb.Settings(
+                    start_method="thread"
+                ),  # required for offline mode
+            )
+
+        else:
+            wandb.init(mode="disabled")
+
+        if self.agent.name == "sf_simple_beakers_continuous_attention":
+
+            for j in range(self.agent.sf_dim + 1):
+                wandb.log({f"timescale_dim": j})
+
+            timescale_embedding = self.agent.timescale_embedding
+            if timescale_embedding is not None:
+                # save timescale embedding as a csv file to workdir
+                timescale_embedding_csv = self.work_dir / "timescale_embedding.csv"
+                np.savetxt(
+                    timescale_embedding_csv,
+                    timescale_embedding.cpu().numpy(),
+                    delimiter=",",
+                )
+                logging.info("timescale_embedding saved to %s", timescale_embedding_csv)
+
+        # Create modulators with different seeds
+        self.mass_mod = OUDrift(mu=1.0, theta=0.001, sigma=self.cfg.ou_drift_sigma, x0=1.0, low=1 - self.cfg.percentage_shifts_mass, high=1 + self.cfg.percentage_shifts_mass, seed=cfg.env_seed)
+        self.friction_mod = OUDrift(mu=(self.cfg.friction_min_val+self.cfg.friction_max_val)/2, theta=0.001, sigma=self.cfg.ou_drift_sigma, x0=1.0, low=self.cfg.friction_min_val,
+                                high=self.cfg.friction_max_val)
+        self.forward_backwards_mod = OUDrift(mu=(self.cfg.forward_backwards_min_val + self.cfg.forward_backwards_max_val) / 2, theta=0.001,
+                                    sigma=self.cfg.ou_drift_sigma, x0=1.0, low=self.cfg.forward_backwards_min_val,
+                                    high=self.cfg.forward_backwards_max_val)
+
+
+    @property
+    def global_step(self):
+        return self._global_step
+
+    @property
+    def global_episode(self):
+        return self._global_episode
+
+    @property
+    def global_frame(self):
+        return self.global_step * self.cfg.action_repeat
+
+    @property
+    def replay_iter(self):
+        if self._replay_iter is None:
+            self._replay_iter = iter(self.replay_loader)
+        return self._replay_iter
+
+    def eval(
+        self,
+        valid_actions: int,
+        name: str,
+        meta=None,
+        mass_scale: float = 1.0,
+        friction_scale: float = 1.0,
+        forward_scale: float = 1.0,
+        use_forward_scale: bool = False,
+    ):
+
+        assert meta is not None, "meta must be provided for evaluation"
+
+        current_eval_env = dmc.make(
+            name,
+            self.cfg.obs_type,
+            self.cfg.frame_stack,
+            self.cfg.action_repeat,
+            self.cfg.seed,
+            num_actions=valid_actions,
+            num_valid_actions=valid_actions,
+            normalize_observation=self.cfg.normalize_observation,
+            device=self.cfg.device,
+            mass_scale=mass_scale,
+            friction_scale=friction_scale,
+            forward_scale=forward_scale,
+            use_forward_scale=use_forward_scale
+        )
+
+        current_eval_env = dmc.ActionDTypeWrapper(current_eval_env, np.float32)
+
+        # current_eval_env = self.eval_envs[task_id]
+        step, episode, total_reward = 0, 0, 0
+        eval_until_episode = utils.Until(self.cfg.num_eval_episodes)
+
+        while eval_until_episode(episode):
+            time_step = current_eval_env.reset()
+            # self.eval_video_recorder.init(current_eval_env, enabled=(episode == 0))
+            while not time_step.last():
+                with torch.no_grad(), utils.eval_mode(self.agent):
+                    action = self.agent.act(
+                        time_step.observation,
+                        meta,
+                        self.global_step,
+                        eval_mode=True,
+                        num_valid_actions=self.valid_actions,
+                    )
+                time_step = current_eval_env.step(action)
+                # self.eval_video_recorder.record(current_eval_env)
+                total_reward += time_step.reward
+                step += 1
+
+            episode += 1
+            # self.eval_video_recorder.save(f"{self.global_frame}.mp4")
+
+        with self.logger.log_and_dump_ctx(self.global_frame, ty="eval") as log:
+            log("episode_reward", total_reward / episode)
+            log("episode_length", step * self.cfg.action_repeat / episode)
+            log("episode", self.global_episode)
+            log("step", self.global_step)
+            log("task_id", self._current_task_id)
+            log("exposure_id", self._exposure_id)
+            log("mass", mass_scale)
+            log("friction", friction_scale)
+            log("forward_scale", forward_scale)
+
+    def train(self):
+        # predicates
+        train_until_step = utils.Until(
+            self.cfg.num_train_frames, self.cfg.action_repeat
+        )
+        seed_until_step = utils.Until(self.cfg.num_seed_frames, self.cfg.action_repeat)
+        eval_every_step = utils.Every(
+            self.cfg.eval_every_frames, self.cfg.action_repeat
+        )
+
+        total_returns = 0
+
+        if self.agent.consolidation:
+            self.agent.num_train_frames = (
+                self.cfg.num_train_frames // self.cfg.action_repeat
+            )
+            self.agent.set_up_consolidation_system()
+
+        for exposure_id in range(self.cfg.num_exposures):
+            if self.cfg.terminate_after_first_task and exposure_id > 0:
+                break
+            for task_id in range(self.num_tasks):
+
+                total_returns_task = 0
+                if self.cfg.terminate_after_first_task and task_id > 0:
+                    break
+                task_step = 0
+                self._current_task_id = task_id
+                self._exposure_id = exposure_id
+
+                if not self.cfg.turn_off_mass and self.global_step % self.cfg.sample_new_mass_every_n_steps == 0:
+                    mass_scale = self.mass_mod.sample()
+                elif self.cfg.turn_off_mass:
+                    mass_scale = 1.0
+
+                if not self.cfg.turn_off_friction:
+                    friction_scale = self.friction_mod.sample()
+                else:
+                    friction_scale = 1.0
+
+                if not self.cfg.turn_off_forward_backwards:
+                    forward_scale = self.forward_backwards_mod.sample()
+                else:
+                    forward_scale = 1.0
+
+                name = self.tasks[self._current_task_id]
+                domain, task = name.split("_", 1)
+
+                logging.info("current domain: %s", domain)
+                logging.info("current task: %s", task)
+
+                current_train_env = dmc.make(
+                    name,
+                    self.cfg.obs_type,
+                    self.cfg.frame_stack,
+                    self.cfg.action_repeat,
+                    self.cfg.seed,
+                    num_actions=self.valid_actions,
+                    num_valid_actions=self.valid_actions,
+                    normalize_observation=self.cfg.normalize_observation,
+                    device=self.cfg.device,
+                    mass_scale=mass_scale,
+                    friction_scale=friction_scale,
+                    forward_scale=forward_scale,
+                    use_forward_scale=self.cfg.use_forward_scale,
+                )
+
+                current_train_env = dmc.ActionDTypeWrapper(
+                    current_train_env, np.float32
+                )
+
+                if self.cfg.reset_buffer_every_task:
+                    self.replay_storage.clear()
+
+                episode_step, episode_reward = 0, 0
+                episode_discount = self.cfg.discount
+                time_step = current_train_env.reset()
+
+                meta = self.agent.init_meta()
+                self.replay_storage.add(time_step, meta)
+                # self.train_video_recorder.init(time_step.observation)
+                metrics = {}
+                while train_until_step(task_step + 1):
+
+                    if time_step.last():
+                        # discount should be 0 for the last step
+                        self._global_episode += 1
+
+                        if (
+                            self.global_episode
+                            % self.cfg.switch_mass_friction_every_n_episodes
+                            == 0
+                        ):
+                            # switch mass and friction
+                            if not self.cfg.turn_off_mass and self.global_step % self.cfg.sample_new_mass_every_n_steps == 0:
+                                mass_scale = self.mass_mod.sample()
+                            elif self.cfg.turn_off_mass:
+                                mass_scale = 1.0
+
+                            if not self.cfg.turn_off_friction:
+                                friction_scale = self.friction_mod.sample()
+                            else:
+                                friction_scale = 1.0
+
+                            if not self.cfg.turn_off_forward_backwards:
+                                forward_scale = self.forward_backwards_mod.sample()
+                            else:
+                                forward_scale = 1.0
+
+                            metrics["mass_scale"] = mass_scale
+                            metrics["friction_scale"] = friction_scale
+                            metrics["forward_scale"] = forward_scale
+
+                            current_train_env = dmc.make(
+                                name,
+                                self.cfg.obs_type,
+                                self.cfg.frame_stack,
+                                self.cfg.action_repeat,
+                                self.cfg.seed,
+                                num_actions=self.valid_actions,
+                                num_valid_actions=self.valid_actions,
+                                normalize_observation=self.cfg.normalize_observation,
+                                device=self.cfg.device,
+                                mass_scale=mass_scale,
+                                friction_scale=friction_scale,
+                                forward_scale=forward_scale,
+                                use_forward_scale=self.cfg.use_forward_scale,
+                            )
+
+                            logging.info("current domain: %s", domain)
+                            logging.info("current task: %s", task)
+
+                        # self.train_video_recorder.save(f"{self.global_frame}.mp4")
+                        # wait until all the metrics schema is populated
+                        if metrics is not None:
+                            # log stats
+                            elapsed_time, total_time = self.timer.reset()
+                            episode_frame = episode_step * self.cfg.action_repeat
+                            if self.global_episode % self.cfg.log_freq == 0:
+                                with self.logger.log_and_dump_ctx(
+                                    self.global_frame, ty="train"
+                                ) as log:
+                                    log("fps", episode_frame / elapsed_time)
+                                    log("total_time", total_time)
+                                    log("episode_reward", episode_reward)
+                                    log("episode_length", episode_frame)
+                                    log("episode", self.global_episode)
+                                    log("buffer_size", len(self.replay_storage))
+                                    log("step", self.global_step)
+                                    log("task_id", task_id)
+                                    log("total_returns", total_returns)
+                                    log("total_returns_task", total_returns_task)
+                                    log("exposure_id", exposure_id)
+                                    log("mass", mass_scale)
+                                    log("friction", friction_scale)
+                                    log("forward_scale", forward_scale)
+                                    log("update_step", self.agent.update_step)
+
+                        # reset env
+                        time_step = current_train_env.reset()
+
+                        meta = self.agent.solved_meta
+                        self.replay_storage.add(time_step, meta)
+                        # self.train_video_recorder.init(time_step.observation)
+                        # try to save snapshot
+                        episode_step = 0
+                        episode_reward = 0
+                        episode_discount = self.cfg.discount
+
+                    # use episode discount instead of time_step.discount since time_step.discount not correctly updated
+                    # in this codebase as the discount factor is handled in the replay buffer sample function
+                    episode_discount *= self.cfg.discount
+
+                    if seed_until_step(self.global_step):
+                        meta = self.agent.init_meta()
+                    else:
+                        meta = self.agent.solved_meta
+
+                    # try to evaluate
+                    if eval_every_step(self.global_step):
+                        self.logger.log(
+                            "eval_total_time",
+                            self.timer.total_time(),
+                            self.global_frame,
+                        )
+                        self.eval(
+                            valid_actions=self.valid_actions,
+                            meta=meta,
+                            mass_scale=mass_scale,
+                            friction_scale=friction_scale,
+                            forward_scale=forward_scale,
+                            use_forward_scale=self.cfg.use_forward_scale,
+                            name=name,
+                        )
+
+                    # sample action
+                    with torch.no_grad(), utils.eval_mode(self.agent):
+                        action = self.agent.act(
+                            time_step.observation,
+                            meta,
+                            self.global_step,
+                            eval_mode=False,
+                            num_valid_actions=self.valid_actions,
+                        )
+
+                    # try to update the agent
+                    if not seed_until_step(self.global_step):
+                        if self.agent.use_plasticity_injection:
+                            logging.log_first_n(logging.INFO, "Plasticity injection step: {}".format(self.plasticity_injection_step), n=1)
+                            if self.global_step >= self.plasticity_injection_step:
+                                logging.log_first_n(logging.INFO, "Using plasticity injection", n=1)
+                                use_plasticity_injection = True
+                            else:
+                                use_plasticity_injection = False
+
+                            metrics.update(
+                                self.agent.update(
+                                    self.replay_iter,
+                                    self.global_step,
+                                    plasticity_injection=use_plasticity_injection,
+                                )
+                            )
+                        else:
+                            metrics.update(
+                                self.agent.update(
+                                    self.replay_iter,
+                                    self.global_step,
+                                )
+                            )
+                        self.logger.log_metrics(metrics, self.global_frame, ty="train")
+
+                        # for k, v in metrics.items():
+                        #     print(f"{k}: {v}")
+
+                    # take env step
+                    time_step = current_train_env.step(action)
+                    episode_reward += time_step.reward
+                    total_returns += time_step.reward
+                    total_returns_task += time_step.reward
+                    self.replay_storage.add(time_step, meta)
+                    # self.train_video_recorder.record(time_step.observation)
+                    episode_step += 1
+                    self._global_step += 1
+                    task_step += 1
+
+                # save snapshot at the end of each task
+                if self.cfg.save_snapshot_after_each_task:
+                    self.save_snapshot()
+
+    def save_snapshot(self):
+        snapshot_dir = self.work_dir / Path(self.cfg.snapshot_dir)
+
+        if self.agent.consolidation:
+            snapshot_dir = (
+                snapshot_dir / f"beaker_capacity_{self.cfg.agent.beaker_capacity}"
+            )
+            snapshot_dir = snapshot_dir / f"init_tube_{self.cfg.agent.init_tube}"
+            snapshot_dir = snapshot_dir / f"num_beakers_{self.cfg.agent.num_beakers}"
+            snapshot_dir = (
+                snapshot_dir
+                / f"max_grad_norm_consolidation{self.cfg.agent.max_grad_norm_consolidation}"
+            )
+
+        snapshot_dir.mkdir(exist_ok=True, parents=True)
+        snapshot = snapshot_dir / f"snapshot_{self.global_frame}.pt"
+        keys_to_save = [
+            "agent",
+            "_global_step",
+            "_global_episode",
+            "_exposure_id",
+            "_current_task_id",
+        ]
+        payload = {k: self.__dict__[k] for k in keys_to_save}
+        with snapshot.open("wb") as f:
+            torch.save(payload, f)
+            logging.info(f"snapshot saved to {snapshot}")
+
+    def load_snapshot(self, snapshot_path):
+        with snapshot_path.open("rb") as f:
+            payload = torch.load(f)
+            for k, v in payload.items():
+                self.__dict__[k] = v
+            logging.info(f"snapshot loaded from {snapshot_path}")
+
+
+@hydra.main(config_path=".", config_name="full_train_multitimescale", version_base=None)
+def main(cfg):
+    from full_train_multitimescale_ou_drift import Workspace as W
+
+    workspace = W(cfg)
+    workspace.train()
+
+
+if __name__ == "__main__":
+    main()

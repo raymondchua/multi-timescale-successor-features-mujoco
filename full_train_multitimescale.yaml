@@ -1,0 +1,112 @@
+defaults:
+  - agent: td3
+  - _self_ # this yaml file is overriding configs from the Defaults List (eg. {agent}.yaml)
+  - resources: null
+
+# mode
+reward_free: false
+# task settings
+domain: walker # primal task will be infered in runtime
+obs_type: states # [states, pixels]
+frame_stack: 3 # only works if obs_type=pixels
+action_repeat: 1 # set to 2 for pixels
+discount: 0.99
+# train settings
+#num_train_frames: 2000010
+num_train_frames: 2000000
+num_seed_frames: 4000
+# eval
+eval_every_frames: 10000
+num_eval_episodes: 10
+# snapshot
+save_snapshot_after_each_task: false
+snapshot_dir: ./${mode}/models/${obs_type}/${domain}/${agent.name}/${seed}
+snapshot_base_dir: ./full_train/models/ # for testing loading from saved models only
+# replay buffer
+reset_buffer_every_task: false
+replay_buffer_size: 1000000
+replay_buffer_num_workers: 2
+batch_size: ${agent.batch_size}
+nstep: ${agent.nstep}
+update_encoder: true # should always be true for pre-training
+# misc
+seed: 1
+#device: cuda
+device: cpu
+save_eval_video: true
+save_train_video: false
+use_tb: false
+use_wandb: false
+# experiment
+experiment: exp
+num_exposures: 2
+log_freq: 10  # log every n episodes
+#log_freq: 10000  # log every n steps
+terminate_after_first_task: false
+same_reward_for_all_tasks: false
+diff_dynamics_for_all_tasks: false
+diff_run_speed_for_all_tasks: false
+diff_domains_same_reward: false
+diff_domains_diff_reward: false
+diff_domains_diff_reward_cheetah_fish: false
+walk_run_tasks: false
+stand_run_tasks: false
+run_jump_tasks: false
+single_task_run: false
+single_task_walk: false
+single_task_run_fast: false
+single_task_run_backward: false
+env_type: dm_control
+rotate_actions_second_task: false
+rotate_actions_degree: 0.0
+wandb_mode: offline
+normalize_observation: false
+
+# multi-timescale changes
+switch_mass_friction_every_n_episodes: 10
+mass_modulator_period: 250000
+friction_modulator_period: 250000
+forward_backwards_modulator_period: 250000
+percentage_shifts_mass: 0.01
+percentage_shifts_friction: 1.0
+friction_min_val: 0.5  # the smallest before the physics simulation crashes
+friction_max_val: 2.00 # values from Loss of plasticity in deep continual learning paper
+use_forward_scale: false
+forward_backwards_min_val: -1
+forward_backwards_max_val: 1
+turn_off_friction: true
+turn_off_forward_backwards: true
+turn_off_mass: false
+ou_drift_sigma: 0.02
+sample_new_mass_every_n_steps: 1
+
+# plasticity_injection based on num_train_frames
+plasticity_injection: 0.5
+
+episode_length: 10000
+
+wandb_dir: ./wandb
+#work_dir: /scratch/chuaraym/url_benchmark/${mode}/
+mila_work_dir: /home/mila/c/chuaraym/scratch/url_benchmark/${mode}/
+work_dir: /Users/raymondchua/Documents/mujoco_crl/${mode}/
+mode: full_train_run_forward
+mila_env: false
+
+env_seed: 42
+
+num_envs: 4
+
+#hydra:
+#  run:
+#    dir: /scratch/chuaraym/url_benchmark/full_train/exp_local/${now:%Y.%m.%d}/${now:%H%M%S}_${agent.name}
+#  sweep:
+#    dir: /scratch/chuaraym/url_benchmark/full_train/exp_sweep/${now:%Y.%m.%d}/${now:%H%M}_${agent.name}_${experiment}
+#    subdir: ${hydra.job.num}
+#  launcher:
+#    timeout_min: 4300
+#    cpus_per_task: 10
+#    gpus_per_node: 1
+#    tasks_per_node: 1
+#    mem_gb: 160
+#    nodes: 1
+#    submitit_folder: ./exp_sweep/${now:%Y.%m.%d}/${now:%H%M}_${agent.name}_${experiment}/.slurm

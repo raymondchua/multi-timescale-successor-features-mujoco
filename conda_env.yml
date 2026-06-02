@@ -1,0 +1,29 @@
+name: multitimescale_sfs_mujoco
+
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - scipy
+  - matplotlib
+  - pandas
+
+  - pip:
+      - dm_control
+      - mujoco
+      - gymnasium
+      - hydra-core
+      - wandb
+      - moviepy
+      - shimmy
+      - termcolor
+      - tensorboard
+      - opencv-python
+      - torch 
+      - torchvision
