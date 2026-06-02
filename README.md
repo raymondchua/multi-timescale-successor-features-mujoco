@@ -11,7 +11,7 @@ The authors are Raymond Chua, Doina Precup and Blake Richards.
 For the Jax implementation of the 3D Four Rooms experiments, check out [Multi-Timescales SFs Jax Implementation](https://github.com/raymondchua/multi-timescale-successor-features-fourrooms) 
 
 
-[Paper]
+[Paper](https://arxiv.org/abs/2605.26357)
 [Blog post]
 
 ## Introduction
