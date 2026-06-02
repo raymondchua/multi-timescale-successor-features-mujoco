@@ -145,5 +145,12 @@ This repo is built upon the [simple SFs repo](https://github.com/raymondchua/sim
 
 ## Citations
 ***
-More info on how to cite to follow
+If you find this repository useful in your research, please consider citing our paper:
+```bibtex
+@article{chua2026balancing,
+  title={Balancing Plasticity and Stability with Fast and Slow Successor Features},
+  author={Chua, Raymond and Precup, Doina and Richards, Blake Aaron},
+  year={2026}
+}
+```
 
