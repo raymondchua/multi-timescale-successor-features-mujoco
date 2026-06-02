@@ -1,0 +1,8 @@
+# @package agent
+defaults:
+  - td3
+_target_: agent.td3_online_ewc.TD3_online_EWC
+name: td3_online_ewc
+ewc_gamma: 0.99
+ewc_regularization: 25 #[25, 75, 125, 175] in the progress and compress paper
+fisher_update_interval: 10000

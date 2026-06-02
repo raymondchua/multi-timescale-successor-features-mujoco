@@ -1,0 +1,10 @@
+# @package agent
+defaults:
+  - td3
+_target_: agent.td3_cbp.TD3_continual_backprop_Agent
+name: td3_continual_backprop
+dead_eps: 1e-3
+maturity_threshold: 100
+bottom_frac: 0.1
+ema_decay: 0.99
+replacement_rate: 1e-4

@@ -1,0 +1,5 @@
+# @package agent
+defaults:
+  - td3
+_target_: agent.td3_plasticity_injection.TD3_plasticity_injection_Agent
+name: td3_plasticity_injection

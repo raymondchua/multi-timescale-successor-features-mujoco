@@ -1,0 +1,6 @@
+# @package agent
+defaults:
+  - td3_online_ewc
+_target_: agent.td3_online_ewc_capacity_scaled.TD3_online_EWC_capacity_scaled
+name: td3_online_ewc_capacity_scaled
+capacity_scale: 0.87 # scaled to match the same num of params with sf with 9 beakers

@@ -1,0 +1,6 @@
+# @package agent
+defaults:
+  - td3_cbp
+_target_: agent.td3_cbp_capacity_scaled.TD3_continual_backprop_capcity_scaled_Agent
+name: td3_cbp_capacity_scaled
+capacity_scale: 0.87 # scaled to match the same num of params with sf with 9 beakers

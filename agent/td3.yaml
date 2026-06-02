@@ -1,0 +1,28 @@
+# @package agent
+_target_: agent.td3.TD3Agent
+name: td3
+action_shape: ??? # to be specified later
+batch_size: 1024 # 256 for pixels
+consolidation: false
+critic_target_tau: 0.01
+device: ${device}
+domain: ???
+feature_dim: 50
+hidden_dim: 1024
+init_critic: true
+log_grad: false
+lr: 1e-4
+meta_dim: 0
+nstep: 3
+num_expl_steps: ??? # to be specified later
+obs_shape: ??? # to be specified later
+obs_type: ??? # to be specified later
+print_grad: false
+reward_free: ${reward_free}
+stddev_clip: 0.3
+stddev_schedule: 0.2
+update_encoder: ${update_encoder}
+update_every_steps: 2
+use_tb: ${use_tb}
+use_wandb: ${use_wandb}
+normalize_basis_features_in_critic: false

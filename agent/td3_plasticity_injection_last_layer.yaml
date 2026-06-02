@@ -1,0 +1,5 @@
+# @package agent
+defaults:
+  - td3
+_target_: agent.td3_plasticity_injection_last_layer.TD3_plasticity_injection_last_layer_Agent
+name: td3_plasticity_injection_last_layer

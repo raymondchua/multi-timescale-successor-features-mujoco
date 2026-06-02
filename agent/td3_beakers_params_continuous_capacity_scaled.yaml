@@ -1,0 +1,6 @@
+# @package agent
+defaults:
+  - td3_beakers_params_continuous
+_target_: agent.td3_beakers_params_continuous_capacity_scaled.TD3_beakers_params_continuous_capacity_scaled
+name: td3_beakers_params_continuous_capacity_scaled
+capacity_scale: 0.62

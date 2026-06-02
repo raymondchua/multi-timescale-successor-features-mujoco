@@ -1,0 +1,6 @@
+# @package agent
+defaults:
+  - td3_plasticity_injection_last_layer
+_target_: agent.td3_plasticity_injection_last_layer_capacity_scaled.TD3_plasticity_injection_last_layer_capacity_scaled_Agent
+name: td3_plasticity_injection_last_layer_capacity_scaled
+capacity_scale: 0.8 # scaled to match the same num of params with sf with 9 beakers

@@ -1,0 +1,12 @@
+# @package agent
+defaults:
+  - td3
+_target_: agent.td3_beakers_params_continuous.TD3_beakers_params_continuous
+name: td3_beakers_params_continuous
+beaker_capacity: 2
+consolidation: true
+flow_factor: 1
+max_grad_norm_consolidation: 10.0
+num_beakers: 5
+lr_consolidation: 1.0
+update_consolidation_every_steps: 1
