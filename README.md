@@ -105,23 +105,23 @@ Here are the results of the various embodiments:
 The repository is structured as follows:
 ```plaintext
 multi-timescale-successor-features-mujoco/
-│── agent/                                                                   # Implementations of the various agents
-│   ├── td3.py                                                               # Base TD3 agent for continuous actions, using actor-critic architecture.
-│   ├── td3_beakers_params_continuous.py                                     # TD3 agent with synaptic consolidation on the parameters of the critic network.
-│   ├── td3_beakers_params_continuous_capacitiy_scaled.py                    # Scaled variant of TD3 agent with synaptic consolidation on the parameters of the critic (Q-values).
-│   ├── td3_capacity_scaled.py                                               # Scaled variant of TD3 agent.
-│   ├── td3_cbp.py                                                           # TD3 agent with continual backprop.
-│   ├── td3_cbp_capacity_scaled.py                                           # Scaled variant of TD3 agent with continual backprop.
-│   ├── td3_online_ewc.py                                                    # TD3 agent with online variant of EWC.
-│   ├── td3_online_ewc_capacity_scaled.py                                    # Scaled variant of TD3 agent with online variant of EWC.
-│   ├── td3_plasticity_injection.py                                          # TD3 agent with plasticity injection on the critic network.
-│   ├── td3_plasticity_injection_last_layer.py                               # TD3 agent with plasticity injection on the last layer of the critic network.
-│   ├── td3_plasticity_injection_last_layer_capacity_scaled.py               # Scaled variant of TD3 agent with plasticity injection on the last layer of the critic network.
-│   ├── ppo.py                                                               # PPO agent
-│   ├── sf_simple.py                                                         # Simple SF agent.
-│   ├── sf_online_ewc.py                                                     # Simple SF agent with online variant of EWC.
-│   ├── sf_simple_beakers_params_continuous.py                               # Simple SF agent with synaptic consolidation on the parameters of the SFs network.
-│   ├── sf_simple_beakers_params_continuous_attention_diff_unique.py         # Simple SF agent with synaptic consolidation on the parameters of the SFs network, and cross-attention mechanism on the SFs operating across different timescales. In order to make the keys and values more discriminative, they are subtracted from its neighbour that learns at a faster timescale. 
+│── agent/                                                                    # Implementations of the various agents
+│   ├── td3.py                                                                # Base TD3 agent for continuous actions, using actor-critic architecture.
+│   ├── td3_beakers_params_continuous.py                                      # TD3 agent with synaptic consolidation on the parameters of the critic network.
+│   ├── td3_beakers_params_continuous_capacitiy_scaled.py                     # Scaled variant of TD3 agent with synaptic consolidation on the parameters of the critic (Q-values).
+│   ├── td3_capacity_scaled.py                                                # Scaled variant of TD3 agent.
+│   ├── td3_cbp.py                                                            # TD3 agent with continual backprop.
+│   ├── td3_cbp_capacity_scaled.py                                            # Scaled variant of TD3 agent with continual backprop.
+│   ├── td3_online_ewc.py                                                     # TD3 agent with online variant of EWC.
+│   ├── td3_online_ewc_capacity_scaled.py                                     # Scaled variant of TD3 agent with online variant of EWC.
+│   ├── td3_plasticity_injection.py                                           # TD3 agent with plasticity injection on the critic network.
+│   ├── td3_plasticity_injection_last_layer.py                                # TD3 agent with plasticity injection on the last layer of the critic network.
+│   ├── td3_plasticity_injection_last_layer_capacity_scaled.py                # Scaled variant of TD3 agent with plasticity injection on the last layer of the critic network.
+│   ├── ppo.py                                                                # PPO agent
+│   ├── sf_simple.py                                                          # Simple SF agent.
+│   ├── sf_online_ewc.py                                                      # Simple SF agent with online variant of EWC.
+│   ├── sf_simple_beakers_params_continuous.py                                # Simple SF agent with synaptic consolidation on the parameters of the SFs network.
+│   ├── sf_simple_beakers_params_continuous_attention_diff_unique.py          # Simple SF agent with synaptic consolidation on the parameters of the SFs network, and cross-attention mechanism on the SFs operating across different timescales. In order to make the keys and values more discriminative, they are subtracted from its neighbour that learns at a faster timescale. 
 │── custom_dmc_tasks/                                                         # Custom tasks and environments for the DeepMind Control Suite.
 │   ├── cheetah.py                                                            # Default cheetah task for the DeepMind Control Suite.
 │   ├── cheetahfast.py                                                        # Cheetah task with faster running speed.
