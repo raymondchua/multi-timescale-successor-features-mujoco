@@ -13,7 +13,7 @@ For the Jax implementation of the 3D Four Rooms experiments, check out [Multi-Ti
 
 [Paper](https://arxiv.org/abs/2605.26357)
 
-[Blog post]
+[Blog post](https://rayofsunshine.me/projects/balancing_plasticity_stability_project/)
 
 ## Introduction
 
