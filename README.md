@@ -154,9 +154,12 @@ This repo is built upon the [simple SFs repo](https://github.com/raymondchua/sim
 If you find this repository useful in your research, please consider citing our paper:
 ```bibtex
 @article{chua2026balancing,
-  title={Balancing Plasticity and Stability with Fast and Slow Successor Features},
-  author={Chua, Raymond and Precup, Doina and Richards, Blake Aaron},
-  year={2026}
+  abbr={ICML},
+  title     = {Balancing Plasticity and Stability with Fast and Slow Successor Features},
+  author    = {Raymond Chua and Doina Precup and Blake A. Richards},
+  journal =   {Proceedings of the 43rd International Conference on Machine Learning (ICML)},
+  year      = {2026},
+  url       = {https://arxiv.org/abs/2605.26357},
 }
 ```
 
